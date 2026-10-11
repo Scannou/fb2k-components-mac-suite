@@ -4,7 +4,8 @@
 //
 //  Pulls real-time FFT data from the foobar2000 visualisation stream and maps
 //  it into a fixed number of frequency bars, with temporal smoothing and
-//  falling peak caps. Pure C++ (no Cocoa), driven once per display frame.
+//  falling peak caps. Pure C++ (no Cocoa), driven once per display frame;
+//  all dynamics scale with the frame's duration, so any refresh rate works.
 //
 
 #pragma once
@@ -25,8 +26,8 @@ public:
         int    freqScale  = 0;       // spectrum_config::FreqScale
         bool   peakHold    = true;
 
-        // Fall dynamics (concrete per-frame rates; the UI maps friendly 0-100
-        // sliders to these). Each layer should fall slower than the one below.
+        // Fall dynamics (concrete rates per 1/60 s frame; the UI maps friendly
+        // 0-100 sliders to these). Each layer should fall slower than the one below.
         float  shadowFall    = 0.012f;   // shadow band linear fall per frame
         float  peakGravity   = 0.0009f;  // peak line acceleration per frame
         int    peakHoldFrames = 24;      // frames a peak holds before falling
@@ -37,10 +38,11 @@ public:
     // Apply new settings. Rebuilds internal band tables when needed.
     void configure(const Settings& settings);
 
-    // Pull the latest spectrum and advance smoothing/peak state by one frame.
-    // Safe to call when nothing is playing (bars decay toward zero).
+    // Pull the latest spectrum and advance smoothing/peak state by `dt` seconds
+    // (the time since the previous tick). Safe to call when nothing is playing
+    // (bars decay toward zero).
     // Returns true if live audio data was read, false if idle/decaying.
-    bool tick();
+    bool tick(double dt);
 
     // Drop the visualisation stream (call when the view goes off-screen).
     // The stream is lazily recreated on the next tick().
@@ -82,7 +84,7 @@ private:
     std::vector<float> _shadow;   // medium: falls slower than the bar
     std::vector<float> _peaks;    // slowest: holds, then eases down
     std::vector<float> _peakVel;  // downward velocity per peak cap
-    std::vector<int>   _peakHold; // frames remaining before a peak starts falling
+    std::vector<float> _peakHold; // 1/60 s frames remaining before a peak starts falling
 
     bool _bandsDirty = true;
     bool _active = false;

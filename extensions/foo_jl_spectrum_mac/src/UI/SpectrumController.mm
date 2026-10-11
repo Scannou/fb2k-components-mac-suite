@@ -12,16 +12,34 @@
 #include <atomic>
 #include <algorithm>
 #include <Carbon/Carbon.h>  // kVK_Escape
+#import <QuartzCore/QuartzCore.h>
 
 @interface SpectrumController () {
     std::unique_ptr<SpectrumAnalyzer> _analyzer;
     SpectrumAnalyzer::Settings _settings;  // last applied, for "Auto" bar count updates
     bool _autoBars;
+    id _displayLink;            // CADisplayLink (macOS 14+); otherwise _timer drives ticks
     NSTimer *_timer;
+    CFTimeInterval _lastTick;   // time of the previous tick, 0 before the first
     NSVisualEffectView *_glassEffectView;
 }
 @property (nonatomic, readwrite) SpectrumView *spectrumView;
 - (void)shutdownForQuit;
+- (void)displayLinkFired:(CADisplayLink *)link API_AVAILABLE(macos(14.0));
+@end
+
+// CADisplayLink retains its target; this weak trampoline keeps the link from
+// holding the controller alive.
+API_AVAILABLE(macos(14.0))
+@interface SpectrumDisplayLinkTarget : NSObject
+@property (nonatomic, weak) SpectrumController *controller;
+- (void)displayLinkFired:(CADisplayLink *)link;
+@end
+
+@implementation SpectrumDisplayLinkTarget
+- (void)displayLinkFired:(CADisplayLink *)link {
+    [self.controller displayLinkFired:link];
+}
 @end
 
 // Registry of live controllers so we can release visualisation streams before
@@ -144,7 +162,7 @@ namespace {
     registerController(self);
 
     // Start now as well: appearance callbacks are not guaranteed for a view
-    // hosted inside the foobar2000 layout. tick guards on window visibility.
+    // hosted inside the foobar2000 layout. Ticks guard on window visibility.
     [self startTimer];
 }
 
@@ -229,34 +247,68 @@ namespace {
 
 #pragma mark - Timer
 
+// Shortest time between ticks. On fast displays this takes every second (or
+// third) refresh, an even cadence of 60-90 fps instead of drawing at up to 240 Hz.
+static const CFTimeInterval kMinTickInterval = 0.0105;
+
 - (void)startTimer {
     [self stopTimer];
     if (g_shutdown.load()) return;
+    _lastTick = 0;
+
+    // A display link fires in step with the screen's refresh, so each displayed
+    // frame carries exactly one update. A free-running timer drifts against the
+    // refresh and shows repeated and skipped frames.
+    if (@available(macOS 14.0, *)) {
+        // The link belongs to the view's screen; with no window yet,
+        // spectrumViewDidMoveToWindow: starts it later.
+        if (!self.spectrumView.window) return;
+        SpectrumDisplayLinkTarget *target = [[SpectrumDisplayLinkTarget alloc] init];
+        target.controller = self;
+        CADisplayLink *link = [self.spectrumView displayLinkWithTarget:target
+                                                              selector:@selector(displayLinkFired:)];
+        link.preferredFrameRateRange = CAFrameRateRangeMake(60, 120, 60);
+        [link addToRunLoop:[NSRunLoop mainRunLoop] forMode:NSRunLoopCommonModes];
+        _displayLink = link;
+        return;
+    }
+
     __weak typeof(self) weakSelf = self;
     _timer = [NSTimer scheduledTimerWithTimeInterval:1.0 / 60.0
                                              repeats:YES
                                                block:^(NSTimer *t) {
         __strong typeof(weakSelf) self = weakSelf;
         if (!self) { [t invalidate]; return; }
-        [self tick];
+        [self tickAt:CACurrentMediaTime()];
     }];
     [[NSRunLoop currentRunLoop] addTimer:_timer forMode:NSRunLoopCommonModes];
 }
 
 - (void)stopTimer {
+    [_displayLink invalidate];
+    _displayLink = nil;
     [_timer invalidate];
     _timer = nil;
 }
 
-- (void)tick {
+- (void)displayLinkFired:(CADisplayLink *)link {
+    const CFTimeInterval now = link.timestamp;
+    if (_lastTick > 0 && now - _lastTick < kMinTickInterval) return;
+    [self tickAt:now];
+}
+
+- (void)tickAt:(CFTimeInterval)now {
     @autoreleasepool {
         if (g_shutdown.load()) { [self stopTimer]; return; }
+        const double dt = _lastTick > 0 ? now - _lastTick : 1.0 / 60.0;
+        _lastTick = now;
+
         NSWindow *window = self.view.window;
         if (!window || self.view.isHiddenOrHasHiddenAncestor) return;
         // Skip fully covered windows, e.g. the panel while full screen is up.
         if (!(window.occlusionState & NSWindowOcclusionStateVisible)) return;
 
-        bool live = _analyzer->tick();
+        bool live = _analyzer->tick(dt);
         self.spectrumView.playing = live;
 
         // Redraw while there is live audio or bars/peaks are still settling.
@@ -294,6 +346,11 @@ namespace {
     prefs.target = self;
     [menu addItem:prefs];
     [menu popUpMenuPositioningItem:nil atLocation:point inView:view];
+}
+
+- (void)spectrumViewDidMoveToWindow:(SpectrumView *)view {
+    if (view.window) [self startTimer];
+    else [self stopTimer];
 }
 
 - (void)spectrumViewRequestsFullScreenToggle:(SpectrumView *)view {

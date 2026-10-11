@@ -789,6 +789,15 @@ static NSString *probeHz(double f) {
     [msg drawAtPoint:p withAttributes:attrs];
 }
 
+#pragma mark - Window changes
+
+- (void)viewDidMoveToWindow {
+    [super viewDidMoveToWindow];
+    if ([self.delegate respondsToSelector:@selector(spectrumViewDidMoveToWindow:)]) {
+        [self.delegate spectrumViewDidMoveToWindow:self];
+    }
+}
+
 #pragma mark - Appearance changes
 
 - (void)viewDidChangeEffectiveAppearance {

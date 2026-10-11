@@ -20,6 +20,8 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)spectrumView:(SpectrumView *)view autoBarCountChanged:(NSInteger)count;
 // Sent on a left double-click.
 - (void)spectrumViewRequestsFullScreenToggle:(SpectrumView *)view;
+// Sent when the view enters or leaves a window (view.window is already updated).
+- (void)spectrumViewDidMoveToWindow:(SpectrumView *)view;
 @end
 
 @interface SpectrumView : NSView
