@@ -23,7 +23,7 @@
     int      _gapPercent;
     int      _minHz;
     int      _maxHz;
-    bool     _logScale;
+    int      _freqScale;   // spectrum_config::FreqScale
 
     // Transient plot geometry (set each drawRect). Frequency runs along one
     // axis, magnitude along the other, depending on orientation.
@@ -81,7 +81,7 @@
     // divide by zero or take log10 of a non-positive bound.
     if (_minHz < 10) _minHz = 10;
     if (_maxHz <= _minHz + 100) _maxHz = _minHz + 100;
-    _logScale      = getConfigInt(kKeyFreqScale, kDefaultFreqScale) == FreqScaleLog;
+    _freqScale     = (int)getConfigInt(kKeyFreqScale, kDefaultFreqScale);
     _peakHold      = getConfigBool(kKeyPeakHold, kDefaultPeakHold);
     _shadowFill    = getConfigBool(kKeyShadowFill, kDefaultShadowFill);
     _showDbGuides  = getConfigBool(kKeyShowDbGuides, kDefaultShowDbGuides);
@@ -147,22 +147,18 @@ static NSColor *colorFromARGB(uint32_t argb) {
 // Fraction 0..1 across the plot width for a given frequency, matching the
 // analyzer's band mapping so gridlines line up with the bars.
 - (CGFloat)fractionForHz:(double)f {
-    if (_logScale) {
-        double lo = std::log10((double)_minHz);
-        double hi = std::log10((double)_maxHz);
-        return (CGFloat)((std::log10(f) - lo) / (hi - lo));
-    }
-    return (CGFloat)((f - _minHz) / (double)(_maxHz - _minHz));
+    using namespace spectrum_config;
+    const double lo = freqScalePos(_freqScale, _minHz);
+    const double hi = freqScalePos(_freqScale, _maxHz);
+    return (CGFloat)((freqScalePos(_freqScale, f) - lo) / (hi - lo));
 }
 
 // Inverse of fractionForHz:.
 - (double)hzForFraction:(CGFloat)t {
-    if (_logScale) {
-        double lo = std::log10((double)_minHz);
-        double hi = std::log10((double)_maxHz);
-        return std::pow(10.0, lo + (hi - lo) * t);
-    }
-    return _minHz + (double)(_maxHz - _minHz) * t;
+    using namespace spectrum_config;
+    const double lo = freqScalePos(_freqScale, _minHz);
+    const double hi = freqScalePos(_freqScale, _maxHz);
+    return freqScaleHz(_freqScale, lo + (hi - lo) * t);
 }
 
 #pragma mark - Drawing
@@ -587,23 +583,24 @@ static const CGFloat kFreqThick = 13.0;  // along the frequency axis
     }
 }
 
-// Gridline frequencies, ascending. Log scale uses 1..9 x 10^e, adding 1.5x
-// (and 1.25x/1.75x) when the 1x..2x span is wide enough, so the top octave
-// (10k-20k) is not left empty. Linear scale uses a round step ~50px apart.
+// Gridline frequencies, ascending. Log scales use 1..9 x 10^e, adding 1.5x
+// (and 1.25x/1.75x) when that decade's 1x..2x span is wide enough, so the top
+// octave (10k-20k) is not left empty. Linear scale uses a round step ~50px apart.
 - (std::vector<double>)freqAxisTicks {
     std::vector<double> ticks;
     if (_pFreq <= 1.0) return ticks;
 
-    if (_logScale) {
-        const double decades = std::log10((double)_maxHz) - std::log10((double)_minHz);
-        const CGFloat oneToTwo = _pFreq * std::log10(2.0) / decades;
-        std::vector<double> mant = {1, 2, 3, 4, 5, 6, 7, 8, 9};
-        if (oneToTwo >= 48.0)  mant.push_back(1.5);
-        if (oneToTwo >= 120.0) { mant.push_back(1.25); mant.push_back(1.75); }
-        std::sort(mant.begin(), mant.end());
-
+    if (_freqScale != spectrum_config::FreqScaleLinear) {
         for (int e = 1; e <= 5; ++e) {
             const double decade = std::pow(10.0, e);
+            // Per decade: the soft-log scale squeezes the low ones.
+            const CGFloat oneToTwo = _pFreq * ([self fractionForHz:2.0 * decade] -
+                                               [self fractionForHz:decade]);
+            std::vector<double> mant = {1, 2, 3, 4, 5, 6, 7, 8, 9};
+            if (oneToTwo >= 48.0)  mant.push_back(1.5);
+            if (oneToTwo >= 120.0) { mant.push_back(1.25); mant.push_back(1.75); }
+            std::sort(mant.begin(), mant.end());
+
             for (double m : mant) {
                 const double f = m * decade;
                 if (f < _minHz) continue;

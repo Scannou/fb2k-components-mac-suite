@@ -93,17 +93,16 @@ void SpectrumAnalyzer::rebuildBands() {
     const double maxHz = std::min<double>(_settings.maxHz, nyquist);
     const double hzPerBin = sr / fftSize;
 
+    const int scale = _settings.freqScale;
+    const double posMin = spectrum_config::freqScalePos(scale, minHz);
+    const double posMax = spectrum_config::freqScalePos(scale, maxHz);
+    const auto hzAt = [&](double t) {
+        return spectrum_config::freqScaleHz(scale, posMin + (posMax - posMin) * t);
+    };
+
     for (int i = 0; i < bars; ++i) {
-        double f0, f1;
-        if (_settings.logScale) {
-            const double logMin = std::log10(minHz);
-            const double logMax = std::log10(maxHz);
-            f0 = std::pow(10.0, logMin + (logMax - logMin) * (double)i / bars);
-            f1 = std::pow(10.0, logMin + (logMax - logMin) * (double)(i + 1) / bars);
-        } else {
-            f0 = minHz + (maxHz - minHz) * (double)i / bars;
-            f1 = minHz + (maxHz - minHz) * (double)(i + 1) / bars;
-        }
+        const double f0 = hzAt((double)i / bars);
+        const double f1 = hzAt((double)(i + 1) / bars);
 
         int lo = (int)std::floor(f0 / hzPerBin);
         int hi = (int)std::ceil(f1 / hzPerBin) - 1;
@@ -123,7 +122,7 @@ void SpectrumAnalyzer::rebuildBands() {
         // all read the same value, drawing flat steps. Sample those bands at
         // their centre frequency, interpolated between neighbouring bins.
         if (f1 - f0 < hzPerBin) {
-            const double fc = _settings.logScale ? std::sqrt(f0 * f1) : 0.5 * (f0 + f1);
+            const double fc = hzAt(((double)i + 0.5) / bars);
             // Below bin 1 there is nothing to interpolate towards except DC;
             // hold at bin 1 so the lowest bands read flat instead of dropping.
             _binCenter[i] = (float)std::max(1.0, fc / hzPerBin);

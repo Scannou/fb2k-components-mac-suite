@@ -186,7 +186,7 @@ namespace {
     s.minHz     = (int)getConfigInt(kKeyMinHz, kDefaultMinHz);
     s.maxHz     = (int)getConfigInt(kKeyMaxHz, kDefaultMaxHz);
     s.smoothing = (int)getConfigInt(kKeySmoothing, kDefaultSmoothing);
-    s.logScale  = getConfigInt(kKeyFreqScale, kDefaultFreqScale) == FreqScaleLog;
+    s.freqScale = (int)getConfigInt(kKeyFreqScale, kDefaultFreqScale);
     s.peakHold  = getConfigBool(kKeyPeakHold, kDefaultPeakHold);
 
     // Map friendly 0-100 sliders / ms to concrete per-frame rates (60fps timer).

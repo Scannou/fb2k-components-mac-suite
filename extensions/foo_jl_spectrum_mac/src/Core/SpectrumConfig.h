@@ -9,6 +9,7 @@
 #pragma once
 
 #include "../fb2k_sdk.h"
+#include <cmath>
 
 namespace spectrum_config {
 
@@ -28,8 +29,33 @@ enum BarStyle {
 // Frequency axis mapping
 enum FreqScale {
     FreqScaleLog = 0,       // Logarithmic (musically natural)
-    FreqScaleLinear = 1     // Linear
+    FreqScaleLinear = 1,    // Linear
+    FreqScaleSoftLog = 2    // log10(1 + f/50): log highs, near-linear lows
 };
+
+// Corner of the soft-log scale: below it the axis runs close to linear, so the
+// bottom octaves take far less width than on a pure log axis.
+constexpr double kSoftLogCornerHz = 50.0;
+
+// Axis position of a frequency in scale units. A frequency's fraction across
+// the plot is (pos(f) - pos(min)) / (pos(max) - pos(min)); the analyzer's band
+// table and the view's gridlines both go through this so they stay aligned.
+inline double freqScalePos(int scale, double hz) {
+    switch (scale) {
+        case FreqScaleLinear:  return hz;
+        case FreqScaleSoftLog: return std::log10(1.0 + hz / kSoftLogCornerHz);
+        default:               return std::log10(hz);
+    }
+}
+
+// Inverse of freqScalePos.
+inline double freqScaleHz(int scale, double pos) {
+    switch (scale) {
+        case FreqScaleLinear:  return pos;
+        case FreqScaleSoftLog: return kSoftLogCornerHz * (std::pow(10.0, pos) - 1.0);
+        default:               return std::pow(10.0, pos);
+    }
+}
 
 // How the spectrum is drawn
 enum DrawMode {

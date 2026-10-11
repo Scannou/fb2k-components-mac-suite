@@ -109,9 +109,10 @@
     y += 30;
 
     [self.view addSubview:[self label:@"Frequency scale:" at:NSMakePoint(labelX + 10, y + 3)]];
-    _freqScalePopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(controlX, y, 130, 25)];
+    _freqScalePopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(controlX, y, 210, 25)];
     [_freqScalePopup addItemWithTitle:@"Logarithmic"];
     [_freqScalePopup addItemWithTitle:@"Linear"];
+    [_freqScalePopup addItemWithTitle:@"Logarithmic (compact bass)"];  // order = FreqScale
     _freqScalePopup.target = self; _freqScalePopup.action = @selector(freqScaleChanged:);
     [self.view addSubview:_freqScalePopup];
     y += 30;

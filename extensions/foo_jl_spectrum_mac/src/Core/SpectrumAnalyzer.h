@@ -20,7 +20,7 @@ public:
         int    minHz      = 40;
         int    maxHz      = 18000;
         int    smoothing  = 60;      // 0-100, higher = smoother
-        bool   logScale   = true;
+        int    freqScale  = 0;       // spectrum_config::FreqScale
         bool   peakHold    = true;
 
         // Fall dynamics (concrete per-frame rates; the UI maps friendly 0-100
