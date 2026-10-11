@@ -19,6 +19,9 @@
 @interface SpectrumPreferences () {
     NSPopUpButton *_themePopup;
     NSPopUpButton *_drawModePopup;
+    NSPopUpButton *_curveStylePopup;
+    NSSlider      *_colorBarBrightnessSlider;
+    NSTextField   *_colorBarBrightnessLabel;
     NSPopUpButton *_orientationPopup;
     NSPopUpButton *_barCountPopup;
     NSPopUpButton *_fftSizePopup;
@@ -64,7 +67,7 @@
 - (NSString *)preferencesTitle { return @"Spectrum Analyzer"; }
 
 - (void)loadView {
-    SpectrumFlippedView *view = [[SpectrumFlippedView alloc] initWithFrame:NSMakeRect(0, 0, 460, 930)];
+    SpectrumFlippedView *view = [[SpectrumFlippedView alloc] initWithFrame:NSMakeRect(0, 0, 460, 990)];
     self.view = view;
     [NSColor setIgnoresAlpha:NO];
     [NSColorPanel sharedColorPanel].showsAlpha = YES;
@@ -221,6 +224,27 @@
     [self.view addSubview:_drawModePopup];
     y += 30;
 
+    [self.view addSubview:[self label:@"Curve style:" at:NSMakePoint(labelX + 10, y + 3)]];
+    _curveStylePopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(controlX, y, 170, 25)];
+    [_curveStylePopup addItemWithTitle:@"Filled"];              // order = CurveStyle
+    [_curveStylePopup addItemWithTitle:@"Line"];
+    [_curveStylePopup addItemWithTitle:@"Color bars"];
+    [_curveStylePopup addItemWithTitle:@"Line + color bars"];
+    _curveStylePopup.target = self; _curveStylePopup.action = @selector(curveStyleChanged:);
+    _curveStylePopup.toolTip = @"Curve draw mode only. Color bars are stripes that get brighter where a frequency is louder";
+    [self.view addSubview:_curveStylePopup];
+    y += 30;
+
+    [self.view addSubview:[self label:@"Color bar brightness:" at:NSMakePoint(labelX + 10, y + 3)]];
+    _colorBarBrightnessSlider = [[NSSlider alloc] initWithFrame:NSMakeRect(controlX, y, 150, 22)];
+    _colorBarBrightnessSlider.minValue = 10; _colorBarBrightnessSlider.maxValue = 100; _colorBarBrightnessSlider.continuous = YES;
+    _colorBarBrightnessSlider.target = self; _colorBarBrightnessSlider.action = @selector(colorBarBrightnessChanged:);
+    _colorBarBrightnessSlider.toolTip = @"How strong the loudest color bar gets";
+    [self.view addSubview:_colorBarBrightnessSlider];
+    _colorBarBrightnessLabel = [self valueLabelAt:NSMakePoint(controlX + 160, y + 2)];
+    [self.view addSubview:_colorBarBrightnessLabel];
+    y += 30;
+
     [self.view addSubview:[self label:@"Orientation:" at:NSMakePoint(labelX + 10, y + 3)]];
     _orientationPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(controlX, y, 130, 25)];
     [_orientationPopup addItemWithTitle:@"Horizontal"];
@@ -369,6 +393,11 @@
     [self selectIndexPopup:_freqScalePopup index:getConfigInt(kKeyFreqScale, kDefaultFreqScale)];
     [self selectIndexPopup:_barStylePopup index:getConfigInt(kKeyBarStyle, kDefaultBarStyle)];
     [self selectIndexPopup:_drawModePopup index:getConfigInt(kKeyDrawMode, kDefaultDrawMode)];
+    [self selectIndexPopup:_curveStylePopup index:getConfigInt(kKeyCurveStyle, kDefaultCurveStyle)];
+    int colorBarBrightness = (int)getConfigInt(kKeyColorBarBrightness, kDefaultColorBarBrightness);
+    _colorBarBrightnessSlider.integerValue = colorBarBrightness;
+    _colorBarBrightnessLabel.stringValue = [NSString stringWithFormat:@"%d%%", colorBarBrightness];
+    [self updateCurveControlsEnabled];
     [self selectIndexPopup:_orientationPopup index:getConfigInt(kKeyOrientation, kDefaultOrientation)];
 
     _minHzField.integerValue = getConfigInt(kKeyMinHz, kDefaultMinHz);
@@ -482,7 +511,30 @@
 
 - (void)drawModeChanged:(id)sender {
     spectrum_config::setConfigInt(spectrum_config::kKeyDrawMode, _drawModePopup.indexOfSelectedItem);
+    [self updateCurveControlsEnabled];
     [self notifyChanged];
+}
+
+- (void)curveStyleChanged:(id)sender {
+    spectrum_config::setConfigInt(spectrum_config::kKeyCurveStyle, _curveStylePopup.indexOfSelectedItem);
+    [self updateCurveControlsEnabled];
+    [self notifyChanged];
+}
+
+- (void)colorBarBrightnessChanged:(id)sender {
+    int v = (int)_colorBarBrightnessSlider.integerValue;
+    spectrum_config::setConfigInt(spectrum_config::kKeyColorBarBrightness, v);
+    _colorBarBrightnessLabel.stringValue = [NSString stringWithFormat:@"%d%%", v];
+    [self notifyChanged];
+}
+
+// Curve style applies to the Curve draw mode; brightness to its color-bar styles.
+- (void)updateCurveControlsEnabled {
+    using namespace spectrum_config;
+    const BOOL curve = _drawModePopup.indexOfSelectedItem == DrawModeCurve;
+    const NSInteger style = _curveStylePopup.indexOfSelectedItem;
+    _curveStylePopup.enabled = curve;
+    _colorBarBrightnessSlider.enabled = curve && (style == CurveStyleColorBars || style == CurveStyleLineColorBars);
 }
 
 - (void)orientationChanged:(id)sender {

@@ -69,6 +69,14 @@ enum DrawMode {
     DrawModeCurve = 1       // Continuous filled curve across all frequencies
 };
 
+// What the curve draw mode shows
+enum CurveStyle {
+    CurveStyleFilled = 0,        // Line over a gradient-filled area
+    CurveStyleLine = 1,          // Line only
+    CurveStyleColorBars = 2,     // Full-height stripes, brighter where the band is louder
+    CurveStyleLineColorBars = 3  // Line, with the stripes filling the area under it
+};
+
 // Overall component orientation
 enum Orientation {
     OrientationHorizontal = 0, // Frequency along X, magnitude grows up
@@ -84,6 +92,8 @@ constexpr int      kDefaultFftSize    = 4096;    // FFT window (power of 2)
 constexpr int      kDefaultBarStyle   = BarStyleGradient;
 constexpr int      kDefaultFreqScale  = FreqScaleLog;
 constexpr int      kDefaultDrawMode   = DrawModeBars;
+constexpr int      kDefaultCurveStyle = CurveStyleFilled;
+constexpr int      kDefaultColorBarBrightness = 90; // Strength of the loudest color bar, % (10-100)
 constexpr int      kDefaultOrientation = OrientationHorizontal;
 constexpr int      kDefaultMinHz      = 20;      // Lowest displayed frequency
 constexpr int      kDefaultMaxHz      = 20000;   // Highest displayed frequency
@@ -124,6 +134,8 @@ static const char* const kKeyFftSize        = "fft_size";
 static const char* const kKeyBarStyle       = "bar_style";
 static const char* const kKeyFreqScale      = "freq_scale";
 static const char* const kKeyDrawMode       = "draw_mode";
+static const char* const kKeyCurveStyle     = "curve_style";
+static const char* const kKeyColorBarBrightness = "color_bar_brightness";
 static const char* const kKeyOrientation    = "orientation";
 static const char* const kKeyMinHz          = "min_hz";
 static const char* const kKeyMaxHz          = "max_hz";

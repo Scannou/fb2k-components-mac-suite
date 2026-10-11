@@ -18,6 +18,8 @@
     // Cached settings (refreshed via reloadSettings)
     int      _barStyle;
     int      _drawMode;
+    int      _curveStyle;  // spectrum_config::CurveStyle
+    int      _colorBarBrightness;  // strength of the loudest color bar, %
     bool     _vertical;
     bool     _autoBars;
     int      _gapPercent;
@@ -72,6 +74,8 @@
     using namespace spectrum_config;
     _barStyle      = (int)getConfigInt(kKeyBarStyle, kDefaultBarStyle);
     _drawMode      = (int)getConfigInt(kKeyDrawMode, kDefaultDrawMode);
+    _curveStyle    = (int)getConfigInt(kKeyCurveStyle, kDefaultCurveStyle);
+    _colorBarBrightness = (int)getConfigInt(kKeyColorBarBrightness, kDefaultColorBarBrightness);
     _vertical      = getConfigInt(kKeyOrientation, kDefaultOrientation) == OrientationVertical;
     _autoBars      = getConfigInt(kKeyBarCount, kDefaultBarCount) == kBarCountAuto;
     _gapPercent    = (int)getConfigInt(kKeyGapPercent, kDefaultGapPercent);
@@ -385,17 +389,30 @@ static const CGFloat kFreqThick = 13.0;  // along the frequency axis
                shadow:(NSColor *)shadowColor
                   cap:(NSColor *)capColor
               context:(CGContextRef)ctx {
-    // Shadow area behind, then the filled instantaneous curve, then peak line.
-    if (_shadowFill) {
+    using namespace spectrum_config;
+    const BOOL colorBars = _curveStyle == CurveStyleColorBars || _curveStyle == CurveStyleLineColorBars;
+    const BOOL hasLine = _curveStyle != CurveStyleColorBars;
+
+    // Shadow area behind, then the fill, then the instantaneous curve and peak line.
+    if (_shadowFill && !colorBars) {
         [[shadowColor colorWithAlphaComponent:0.35] setFill];
         [[self areaPathForValues:_shadow] fill];
     }
 
-    NSBezierPath *area = [self areaPathForValues:_bars];
-    NSGradient *grad = [[NSGradient alloc]
-        initWithStartingColor:[base colorWithAlphaComponent:0.10]
-                  endingColor:[base colorWithAlphaComponent:0.65]];
-    [grad drawInBezierPath:area angle:(_vertical ? 0.0 : 90.0)];
+    if (colorBars) {
+        CGContextSaveGState(ctx);
+        // With a line the stripes only fill the area under it.
+        if (hasLine) [[self areaPathForValues:_bars] addClip];
+        [self drawColorBarsBase:base hot:capColor context:ctx];
+        CGContextRestoreGState(ctx);
+    } else if (_curveStyle == CurveStyleFilled) {
+        NSBezierPath *area = [self areaPathForValues:_bars];
+        NSGradient *grad = [[NSGradient alloc]
+            initWithStartingColor:[base colorWithAlphaComponent:0.10]
+                      endingColor:[base colorWithAlphaComponent:0.65]];
+        [grad drawInBezierPath:area angle:(_vertical ? 0.0 : 90.0)];
+    }
+    if (!hasLine) return;
 
     NSBezierPath *line = [self linePathForValues:_bars];
     line.lineWidth = 1.5;
@@ -408,6 +425,49 @@ static const CGFloat kFreqThick = 13.0;  // along the frequency axis
         [capColor setStroke];
         [peak stroke];
     }
+}
+
+// Level (0..1 of the dB window) to stripe strength (0..1): a steep curve that
+// keeps most of the spectrum dim and lets only the loudest bands reach full
+// strength.
+static CGFloat colorBarStrength(CGFloat level) {
+    if (level <= 0.0) return 0.0;
+    const CGFloat x = MIN(1.0, level / 0.88);
+    return 0.06 * MIN(1.0, level / 0.2) + 0.94 * std::pow(x, 5.0);
+}
+
+// One stripe per band over the full magnitude range. The louder the band, the
+// more opaque it is and the closer to `hot`, so dominant frequencies stand
+// out; the brightness setting caps how strong the loudest stripe gets. Drawn
+// as a single gradient along the frequency axis with a stop at each band
+// centre, which blends neighbouring bands smoothly.
+- (void)drawColorBarsBase:(NSColor *)base hot:(NSColor *)hot context:(CGContextRef)ctx {
+    const size_t n = _bars.size();
+    if (n == 0) return;
+    NSColorSpace *srgb = [NSColorSpace sRGBColorSpace];
+    NSColor *b = [base colorUsingColorSpace:srgb];
+    NSColor *h = [hot colorUsingColorSpace:srgb];
+    if (!b || !h) return;
+    const CGFloat b3[3] = {b.redComponent, b.greenComponent, b.blueComponent};
+    const CGFloat h3[3] = {h.redComponent, h.greenComponent, h.blueComponent};
+
+    const CGFloat maxStrength = MIN(100, MAX(0, _colorBarBrightness)) / 100.0;
+    std::vector<CGFloat> comps(n * 4), locs(n);
+    for (size_t i = 0; i < n; ++i) {
+        const CGFloat a = maxStrength * colorBarStrength(_bars[i]);
+        for (int c = 0; c < 3; ++c) comps[i * 4 + c] = b3[c] + (h3[c] - b3[c]) * a;
+        comps[i * 4 + 3] = a;
+        locs[i] = ((CGFloat)i + 0.5) / (CGFloat)n;
+    }
+    CGGradientRef grad = CGGradientCreateWithColorComponents(srgb.CGColorSpace, comps.data(), locs.data(), n);
+    if (!grad) return;
+
+    CGContextSaveGState(ctx);
+    const CGPoint lo = [self mapF:0.0 mag:0.0], hi = [self mapF:1.0 mag:1.0];
+    CGContextClipToRect(ctx, CGRectMake(lo.x, lo.y, hi.x - lo.x, hi.y - lo.y));
+    CGContextDrawLinearGradient(ctx, grad, lo, [self mapF:1.0 mag:0.0], 0);
+    CGContextRestoreGState(ctx);
+    CGGradientRelease(grad);
 }
 
 // Curve knots sit at band centres ((i + 0.5) / n) so they line up with the
