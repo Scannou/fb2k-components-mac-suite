@@ -28,8 +28,11 @@
     NSTextField   *_maxHzField;
     NSSlider      *_gapSlider;
     NSTextField   *_gapLabel;
+    NSPopUpButton *_smoothingModePopup;
     NSSlider      *_smoothingSlider;
     NSTextField   *_smoothingLabel;
+    NSSlider      *_slopeSlider;
+    NSTextField   *_slopeLabel;
     NSSlider      *_shadowFallSlider;
     NSTextField   *_shadowFallLabel;
     NSSlider      *_peakFallSlider;
@@ -61,7 +64,7 @@
 - (NSString *)preferencesTitle { return @"Spectrum Analyzer"; }
 
 - (void)loadView {
-    SpectrumFlippedView *view = [[SpectrumFlippedView alloc] initWithFrame:NSMakeRect(0, 0, 460, 870)];
+    SpectrumFlippedView *view = [[SpectrumFlippedView alloc] initWithFrame:NSMakeRect(0, 0, 460, 930)];
     self.view = view;
     [NSColor setIgnoresAlpha:NO];
     [NSColorPanel sharedColorPanel].showsAlpha = YES;
@@ -129,6 +132,15 @@
     [self.view addSubview:_maxHzField];
     y += 30;
 
+    [self.view addSubview:[self label:@"Smoothing mode:" at:NSMakePoint(labelX + 10, y + 3)]];
+    _smoothingModePopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(controlX, y, 150, 25)];
+    [_smoothingModePopup addItemWithTitle:@"Attack / decay"];   // order = SmoothingMode
+    [_smoothingModePopup addItemWithTitle:@"RMS average"];
+    _smoothingModePopup.target = self; _smoothingModePopup.action = @selector(smoothingModeChanged:);
+    _smoothingModePopup.toolTip = @"RMS average: averages signal power over the smoothing time, so levels rise and fall evenly like a real-time analyzer";
+    [self.view addSubview:_smoothingModePopup];
+    y += 30;
+
     [self.view addSubview:[self label:@"Smoothing:" at:NSMakePoint(labelX + 10, y + 3)]];
     _smoothingSlider = [[NSSlider alloc] initWithFrame:NSMakeRect(controlX, y, 150, 22)];
     _smoothingSlider.minValue = 0; _smoothingSlider.maxValue = 100; _smoothingSlider.continuous = YES;
@@ -136,6 +148,17 @@
     [self.view addSubview:_smoothingSlider];
     _smoothingLabel = [self valueLabelAt:NSMakePoint(controlX + 160, y + 2)];
     [self.view addSubview:_smoothingLabel];
+    y += 30;
+
+    [self.view addSubview:[self label:@"Slope:" at:NSMakePoint(labelX + 10, y + 3)]];
+    _slopeSlider = [[NSSlider alloc] initWithFrame:NSMakeRect(controlX, y, 150, 22)];
+    _slopeSlider.minValue = 0; _slopeSlider.maxValue = spectrum_config::kMaxSlopeTenths; _slopeSlider.continuous = YES;
+    _slopeSlider.target = self; _slopeSlider.action = @selector(slopeChanged:);
+    _slopeSlider.toolTip = @"Tilts the spectrum around 1 kHz (dB per octave) so high frequencies read higher";
+    [self.view addSubview:_slopeSlider];
+    _slopeLabel = [self valueLabelAt:NSMakePoint(controlX + 160, y + 2)];
+    _slopeLabel.frame = NSMakeRect(controlX + 160, y + 2, 90, 17);
+    [self.view addSubview:_slopeLabel];
     y += 34;
 
     // --- Dynamics section ---
@@ -351,9 +374,13 @@
     _minHzField.integerValue = getConfigInt(kKeyMinHz, kDefaultMinHz);
     _maxHzField.integerValue = getConfigInt(kKeyMaxHz, kDefaultMaxHz);
 
-    int smoothing = (int)getConfigInt(kKeySmoothing, kDefaultSmoothing);
-    _smoothingSlider.integerValue = smoothing;
-    _smoothingLabel.stringValue = [NSString stringWithFormat:@"%d%%", smoothing];
+    [self selectIndexPopup:_smoothingModePopup index:getConfigInt(kKeySmoothingMode, kDefaultSmoothingMode)];
+    _smoothingSlider.integerValue = getConfigInt(kKeySmoothing, kDefaultSmoothing);
+    [self updateSmoothingLabel];
+
+    int slope = (int)getConfigInt(kKeySlopeTenths, kDefaultSlopeTenths);
+    _slopeSlider.integerValue = slope;
+    _slopeLabel.stringValue = [NSString stringWithFormat:@"%.1f dB/oct", slope / 10.0];
 
     int shadowFall = (int)getConfigInt(kKeyShadowFallSpeed, kDefaultShadowFallSpeed);
     _shadowFallSlider.integerValue = shadowFall;
@@ -474,9 +501,32 @@
 }
 
 - (void)smoothingChanged:(id)sender {
+    spectrum_config::setConfigInt(spectrum_config::kKeySmoothing, _smoothingSlider.integerValue);
+    [self updateSmoothingLabel];
+    [self notifyChanged];
+}
+
+- (void)smoothingModeChanged:(id)sender {
+    spectrum_config::setConfigInt(spectrum_config::kKeySmoothingMode, _smoothingModePopup.indexOfSelectedItem);
+    [self updateSmoothingLabel];
+    [self notifyChanged];
+}
+
+// RMS mode shows the averaging time the slider maps to; attack/decay a percentage.
+- (void)updateSmoothingLabel {
     int v = (int)_smoothingSlider.integerValue;
-    spectrum_config::setConfigInt(spectrum_config::kKeySmoothing, v);
-    _smoothingLabel.stringValue = [NSString stringWithFormat:@"%d%%", v];
+    if (_smoothingModePopup.indexOfSelectedItem == spectrum_config::SmoothingRms) {
+        _smoothingLabel.stringValue = [NSString stringWithFormat:@"%d ms", (int)(v * spectrum_config::kRmsMsPerSmoothingStep)];
+    } else {
+        _smoothingLabel.stringValue = [NSString stringWithFormat:@"%d%%", v];
+    }
+}
+
+- (void)slopeChanged:(id)sender {
+    int v = (int)std::lround(_slopeSlider.doubleValue / 5.0) * 5;   // 0.5 dB/oct steps
+    _slopeSlider.integerValue = v;
+    spectrum_config::setConfigInt(spectrum_config::kKeySlopeTenths, v);
+    _slopeLabel.stringValue = [NSString stringWithFormat:@"%.1f dB/oct", v / 10.0];
     [self notifyChanged];
 }
 

@@ -186,6 +186,8 @@ namespace {
     s.minHz     = (int)getConfigInt(kKeyMinHz, kDefaultMinHz);
     s.maxHz     = (int)getConfigInt(kKeyMaxHz, kDefaultMaxHz);
     s.smoothing = (int)getConfigInt(kKeySmoothing, kDefaultSmoothing);
+    s.smoothingMode = (int)getConfigInt(kKeySmoothingMode, kDefaultSmoothingMode);
+    s.slopeDbPerOct = getConfigInt(kKeySlopeTenths, kDefaultSlopeTenths) / 10.0f;
     s.freqScale = (int)getConfigInt(kKeyFreqScale, kDefaultFreqScale);
     s.peakHold  = getConfigBool(kKeyPeakHold, kDefaultPeakHold);
 

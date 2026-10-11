@@ -20,6 +20,8 @@ public:
         int    minHz      = 40;
         int    maxHz      = 18000;
         int    smoothing  = 60;      // 0-100, higher = smoother
+        int    smoothingMode = 0;    // spectrum_config::SmoothingMode
+        float  slopeDbPerOct = 0.0f; // level tilt around 1 kHz (0 = flat)
         int    freqScale  = 0;       // spectrum_config::FreqScale
         bool   peakHold    = true;
 
@@ -58,6 +60,8 @@ public:
 
 private:
     void rebuildBands();
+    // Display level (0..1) of one bar, read off the first `binCount` bins of _binMag.
+    float barTarget(int bar, int binCount) const;
     void releaseStream();
 
     Settings _settings;
@@ -69,6 +73,10 @@ private:
     // Fractional bin position of the band centre for bands narrower than one
     // FFT bin (low end), or -1 for bands that aggregate whole bins.
     std::vector<float> _binCenter;
+    std::vector<float> _barGain;  // per-bar linear gain from the spectral slope
+
+    std::vector<float> _binMag;   // per-bin magnitude the bars are read from
+    std::vector<float> _binPow;   // RMS mode: time-averaged power per bin
 
     std::vector<float> _bars;     // fast: instantaneous level
     std::vector<float> _shadow;   // medium: falls slower than the bar

@@ -57,6 +57,12 @@ inline double freqScaleHz(int scale, double pos) {
     }
 }
 
+// How bar levels are smoothed over time
+enum SmoothingMode {
+    SmoothingAttackDecay = 0,   // Fast attack, slower decay, applied to the dB display value
+    SmoothingRms = 1            // Exponential average of power per FFT bin (RTA-style)
+};
+
 // How the spectrum is drawn
 enum DrawMode {
     DrawModeBars = 0,       // Discrete frequency bars
@@ -83,6 +89,10 @@ constexpr int      kDefaultMinHz      = 20;      // Lowest displayed frequency
 constexpr int      kDefaultMaxHz      = 20000;   // Highest displayed frequency
 constexpr int      kDefaultGapPercent = 20;      // Gap between bars, % of slot width
 constexpr int      kDefaultSmoothing  = 60;      // Temporal smoothing 0-100 (higher = smoother)
+constexpr int      kDefaultSmoothingMode = SmoothingAttackDecay;
+constexpr double   kRmsMsPerSmoothingStep = 2.0; // RMS mode: averaging time constant per smoothing step (50 -> 100 ms)
+constexpr int      kDefaultSlopeTenths = 0;      // Spectral slope around 1 kHz, in 0.1 dB/octave
+constexpr int      kMaxSlopeTenths    = 60;
 constexpr int      kDefaultShadowFallSpeed = 40; // Shadow band fall speed 0-100 (higher = faster)
 constexpr int      kDefaultPeakFallSpeed   = 30; // Peak line fall speed 0-100 (higher = faster)
 constexpr int      kDefaultPeakHoldMs      = 400;// Peak line hold time before it starts falling (ms)
@@ -119,6 +129,8 @@ static const char* const kKeyMinHz          = "min_hz";
 static const char* const kKeyMaxHz          = "max_hz";
 static const char* const kKeyGapPercent     = "gap_percent";
 static const char* const kKeySmoothing      = "smoothing";
+static const char* const kKeySmoothingMode  = "smoothing_mode";
+static const char* const kKeySlopeTenths    = "slope_tenths";
 static const char* const kKeyShadowFallSpeed = "shadow_fall_speed";
 static const char* const kKeyPeakFallSpeed   = "peak_fall_speed";
 static const char* const kKeyPeakHoldMs      = "peak_hold_ms";

@@ -47,6 +47,29 @@ SpectrumAnalyzer::SpectrumAnalyzer() {
     configure(Settings{});
 }
 
+float SpectrumAnalyzer::barTarget(int i, int binCount) const {
+    const int lo = _binLo[i];
+    int hi = _binHi[i];
+    if (hi >= binCount) hi = binCount - 1;
+    // If the clamp leaves lo > hi, the band loop runs zero times and the bar
+    // reads zero.
+
+    float mag = 0.0f;
+    const float centre = _binCenter[i];
+    if (centre >= 1.0f && centre < (float)(binCount - 1)) {
+        // Narrower than a bin: interpolate at the band centre.
+        const int b0 = (int)centre;
+        const float t = centre - (float)b0;
+        mag = _binMag[b0] * (1.0f - t) + _binMag[b0 + 1] * t;
+    } else {
+        // Peak magnitude across the band (peak reads punchier than average).
+        for (int b = lo; b <= hi; ++b) {
+            if (_binMag[b] > mag) mag = _binMag[b];
+        }
+    }
+    return magnitudeToDisplay(mag * _barGain[i]);
+}
+
 void SpectrumAnalyzer::configure(const SpectrumAnalyzer::Settings& settings) {
     _settings = settings;
 
@@ -71,6 +94,7 @@ void SpectrumAnalyzer::configure(const SpectrumAnalyzer::Settings& settings) {
     resampleTo(_peaks, n);
     resampleTo(_peakVel, n);
     resampleTo(_peakHold, n);
+    if (_settings.smoothingMode != spectrum_config::SmoothingRms) _binPow.clear();
     _bandsDirty = true;  // bin ranges depend on sample rate, computed lazily
 }
 
@@ -88,6 +112,7 @@ void SpectrumAnalyzer::rebuildBands() {
     _binLo.assign(bars, 0);
     _binHi.assign(bars, 0);
     _binCenter.assign(bars, -1.0f);
+    _barGain.assign(bars, 1.0f);
 
     const double minHz = std::min<double>(_settings.minHz, nyquist - 1);
     const double maxHz = std::min<double>(_settings.maxHz, nyquist);
@@ -127,6 +152,11 @@ void SpectrumAnalyzer::rebuildBands() {
             // hold at bin 1 so the lowest bands read flat instead of dropping.
             _binCenter[i] = (float)std::max(1.0, fc / hzPerBin);
         }
+
+        if (_settings.slopeDbPerOct != 0.0f) {
+            const double fc = hzAt(((double)i + 0.5) / bars);
+            _barGain[i] = (float)std::pow(10.0, _settings.slopeDbPerOct * std::log2(fc / 1000.0) / 20.0);
+        }
     }
 
     _bandsDirty = false;
@@ -138,6 +168,12 @@ bool SpectrumAnalyzer::tick() {
     const float s = _settings.smoothing / 100.0f;
     const float decayKeep  = 0.60f + 0.39f * s;   // ~0.60 .. 0.99
     const float attackKeep = 0.10f + 0.50f * s;   // ~0.10 .. 0.60
+
+    // RMS mode: one-pole average of power with a time constant set by the
+    // smoothing value (60 fps timer).
+    const bool rms = _settings.smoothingMode == spectrum_config::SmoothingRms;
+    const double rmsTauMs = _settings.smoothing * spectrum_config::kRmsMsPerSmoothingStep;
+    const float rmsKeep = rmsTauMs > 0.0 ? (float)std::exp(-(1000.0 / 60.0) / rmsTauMs) : 0.0f;
 
     audio_chunk_impl spectrum;
     bool gotData = false;
@@ -177,45 +213,45 @@ bool SpectrumAnalyzer::tick() {
 
         const audio_sample* data = spectrum.get_data();
         const unsigned channels = spectrum.get_channel_count();
-        const t_size frames = spectrum.get_sample_count();   // == fftSize/2
-        const int binCount = (int)frames;
+        const int binCount = (int)spectrum.get_sample_count();   // == fftSize/2
 
-        for (int i = 0; i < bars; ++i) {
-            int lo = _binLo[i];
-            int hi = _binHi[i];
-            if (hi >= binCount) hi = binCount - 1;
-            // If the clamp leaves lo > hi, the band loop runs zero times and
-            // the bar decays toward a zero target.
-
-            auto binMag = [&](int b) -> float {
-                float m = 0.0f;
-                for (unsigned c = 0; c < channels; ++c) {
-                    m += (float)std::fabs(data[(size_t)b * channels + c]);
-                }
-                return channels > 1 ? m / (float)channels : m;
-            };
-
-            float mag = 0.0f;
-            const float centre = _binCenter[i];
-            if (centre >= 1.0f && centre < (float)(binCount - 1)) {
-                // Narrower than a bin: interpolate at the band centre.
-                const int b0 = (int)centre;
-                const float t = centre - (float)b0;
-                mag = binMag(b0) * (1.0f - t) + binMag(b0 + 1) * t;
-            } else {
-                // Peak magnitude across the band (peak reads punchier than average).
-                for (int b = lo; b <= hi; ++b) {
-                    const float m = binMag(b);
-                    if (m > mag) mag = m;
-                }
+        // Magnitude per bin, averaged across channels.
+        _binMag.resize((size_t)binCount);
+        for (int b = 0; b < binCount; ++b) {
+            float m = 0.0f;
+            for (unsigned c = 0; c < channels; ++c) {
+                m += (float)std::fabs(data[(size_t)b * channels + c]);
             }
-
-            float target = magnitudeToDisplay(mag);
-
-            float prev = _bars[i];
-            float keep = (target > prev) ? attackKeep : decayKeep;
-            _bars[i] = prev * keep + target * (1.0f - keep);
+            _binMag[b] = channels > 1 ? m / (float)channels : m;
         }
+
+        if (rms) {
+            // Average power per bin over time and read the bars off the
+            // averaged spectrum, so transients decay at one rate everywhere.
+            resampleTo(_binPow, (size_t)binCount);
+            for (int b = 0; b < binCount; ++b) {
+                _binPow[b] = _binPow[b] * rmsKeep + _binMag[b] * _binMag[b] * (1.0f - rmsKeep);
+                _binMag[b] = std::sqrt(_binPow[b]);
+            }
+            for (int i = 0; i < bars; ++i) _bars[i] = barTarget(i, binCount);
+        } else {
+            for (int i = 0; i < bars; ++i) {
+                const float target = barTarget(i, binCount);
+                const float prev = _bars[i];
+                const float keep = (target > prev) ? attackKeep : decayKeep;
+                _bars[i] = prev * keep + target * (1.0f - keep);
+            }
+        }
+    } else if (rms && !_binPow.empty()) {
+        // No live audio: let the averaged spectrum run down at its own rate.
+        if (_bandsDirty) rebuildBands();
+        const int binCount = (int)_binPow.size();
+        _binMag.resize((size_t)binCount);
+        for (int b = 0; b < binCount; ++b) {
+            _binPow[b] *= rmsKeep;
+            _binMag[b] = std::sqrt(_binPow[b]);
+        }
+        for (int i = 0; i < bars; ++i) _bars[i] = barTarget(i, binCount);
     } else {
         // No live audio: decay everything toward zero.
         for (int i = 0; i < bars; ++i) {
@@ -273,6 +309,7 @@ void SpectrumAnalyzer::suspend() {
     std::fill(_shadow.begin(), _shadow.end(), 0.0f);
     std::fill(_peaks.begin(), _peaks.end(), 0.0f);
     std::fill(_peakVel.begin(), _peakVel.end(), 0.0f);
+    std::fill(_binPow.begin(), _binPow.end(), 0.0f);
     std::fill(_peakHold.begin(), _peakHold.end(), 0);
     _active = false;
 }
